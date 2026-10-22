@@ -1,0 +1,27 @@
+# ===== 数据（重新下载说明见 docs/setup.md 与 scripts/download_data.py）=====
+data/
+
+# ===== 实验产物：检查点 / 日志 / 损失曲线（体积大，不入库）=====
+experiments/
+experiments_origin/
+
+# ===== 官方实现仓库（第三方代码，克隆与统一协议补丁见 third_party/setup_repos.sh）=====
+third_party/ts2vec/
+third_party/CoST/
+third_party/ShuffleMTM/
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# ===== 临时与日志 =====
+*.log
+nohup.out
+smoke_err*.txt
+*.tmp
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db

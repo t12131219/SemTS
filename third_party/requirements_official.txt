@@ -1,0 +1,8 @@
+# 官方实现对照（third_party/）的额外依赖
+# 安装：pip install -r third_party/requirements_official.txt
+einops
+scikit-learn
+matplotlib
+seaborn
+tensorboardX
+sktime
