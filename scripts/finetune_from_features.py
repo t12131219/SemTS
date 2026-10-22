@@ -60,9 +60,14 @@ def main():
     for split, feat in F.items():
         if feat.ndim == 2:  # (N, d) → 逐通道复制 (N, C, d)
             F[split] = np.repeat(feat[:, None, :], C, axis=1)
+    # 适配器导出的是全部窗口（n-L+1），评估只用"有未来目标"的窗口（n-L-H+1）：
+    # 两者窗口顺序一致（均从切分起点开始），按目标窗口数截断特征即对齐
     for split in ("train", "val", "test"):
-        assert F[split].shape[0] == {"train": y_tr, "val": y_va, "test": y_te}[split].shape[0], \
-            f"{split} 特征行数 {F[split].shape[0]} 与窗口数不一致"
+        y = {"train": y_tr, "val": y_va, "test": y_te}[split]
+        if F[split].shape[0] > y.shape[0]:
+            F[split] = F[split][:y.shape[0]]
+        assert F[split].shape[0] == y.shape[0], \
+            f"{split} 特征行数 {F[split].shape[0]} 与窗口数 {y.shape[0]} 不一致"
 
     Xtr = torch.from_numpy(F["train"].reshape(-1, F["train"].shape[-1])).to(dev)
     Xva = torch.from_numpy(F["val"].reshape(-1, F["val"].shape[-1])).to(dev)

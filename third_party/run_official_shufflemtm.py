@@ -94,7 +94,9 @@ def main():
             SHUF, "outputs", "pretrain_checkpoints", "ETTm1", "*", "2024", "ckpt_best.pth")))
         if not cands:
             raise FileNotFoundError("未找到官方预训练 ckpt_best.pth（先跑 run_official_all.bat 的预训练步骤）")
-        args.pretrain_ckpt = cands[-1]
+        # 注意：目录名按字典序 "ep1_" > "ep10"（'_' > '0'），必须按修改时间取最新，
+        # 否则会误取旧的 1-epoch 冒烟 checkpoint
+        args.pretrain_ckpt = max(cands, key=os.path.getmtime)
         print(f"[official_shufflemtm] use ckpt: {args.pretrain_ckpt}")
     export_features(args)
     print("next: python scripts/finetune_from_features.py --feats "

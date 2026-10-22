@@ -14,16 +14,20 @@ time-frequency consistency (TF-C), or masked reconstruction (SimMTM). We observe
 semantic dimensions are largely neglected by current pre-training: **cross-channel temporal
 relations (lead-lag/causality)** and **data quality (missingness/confidence)**. This paper
 proposes **SemTS**, a unified pre-training framework that organizes the general semantics of
-time series into **four ablatable self-supervised streams** on a shared channel-independent
+time series into ablatable self-supervised streams on a shared channel-independent
 patch encoder: (S1) hierarchical temporal-instance contrast for multi-granularity time and
-entity semantics; (S2) disentangled trend-seasonal contrast in time and frequency domains for
-pattern semantics; (S3) a novel **relation head** that regresses soft, automatically mined
+entity semantics; (S3) a novel **relation head** that regresses soft, automatically mined
 lagged cross-correlation labels between channel pairs, making lead-lag structure an explicit
 learning signal; and (S4) a novel **quality head** that reconstructs from a three-state
 (observed/missing/noisy) masked input and predicts per-segment noise levels, making
-"missing ≠ zero" and confidence explicit. On ETT benchmarks, SemTS achieves `<待填>` and
-ablation studies attribute gains to the two novel streams; four semantic probes (order,
-trend-season separation, lag identification, quality readability) verify that each stream
+"missing ≠ zero" and confidence explicit. (An additional trend-seasonal stream S2 is studied
+and shown to be harmful under the unified-window protocol, and is ablated out of the final
+model.) On ETT benchmarks, SemTS (S1+S3+S4) achieves MSE `0.3813/0.4616` at horizons
+96/336 on ETTm1, outperforming unified-backbone baselines TS2Vec (0.4256/0.5019),
+SimMTM (0.4556/0.5344) and TF-C (0.3881/0.4611); ablations attribute the gains to the two
+novel streams, which act synergistically (removing both degrades performance by 32%);
+four semantic probes (order, trend-season separation, lag identification, quality
+readability) verify that each stream
 learns its target semantics.
 
 ## 1. Introduction

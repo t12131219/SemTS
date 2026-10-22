@@ -44,8 +44,9 @@ def main():
     np.random.seed(42)
 
     ds = SlidingWindowDataset(args.data, L=args.L)
-    # 官方 ETT 协议：把训练段作为单条长序列实例 (1, T, C) 喂给 fit()
-    train_series = ds.data[:ds.n_train][None]
+    # 统一协议训练形态：切成 336 窗口多实例喂给官方 fit()（与官方 UCR/UEA 用法一致）。
+    # 整序列 + 201 短段训练会使因果卷积表示的窗口末时间戳特征坍缩（MSE≈1.0 随机水平）
+    train_series = ds.windows("train", stride=336)
 
     model = TS2Vec(
         input_dims=ds.n_channels,
@@ -55,7 +56,7 @@ def main():
         device=dev,
         lr=args.lr,
         batch_size=args.batch_size,
-        max_train_length=201,  # 官方 ETT 配置（训练用 201 长度裁剪；编码器无长度约束，评估仍用 336 窗口）
+        max_train_length=args.L,  # =336：与统一窗口协议匹配（201 短段训练会导致窗口末时间戳表示坍缩）
     )
     t0 = time.time()
     model.fit(train_series, n_iters=args.n_iters, verbose=True)
