@@ -43,6 +43,9 @@ def main():
     ap.add_argument("--epochs", type=int, default=100)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--batch_size", type=int, default=256)
+    ap.add_argument("--fraction", type=float, default=1.0,
+                    help="少量标签比例（如 0.2/0.1/0.05；默认 1.0 全部标签）")
+    ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -59,6 +62,10 @@ def main():
     x_tr, y_tr = load("train")
     x_va, y_va = load("val")
     x_te, y_te = load("test")
+    if args.fraction < 1.0:  # 少量标签子集（固定种子）
+        rng = np.random.default_rng(args.seed)
+        idx = rng.choice(len(x_tr), size=int(len(x_tr) * args.fraction), replace=False)
+        x_tr, y_tr = x_tr[idx], y_tr[idx]
 
     Xtr = extract_instance_reps(model, x_tr, dev)
     Xva = extract_instance_reps(model, x_va, dev)
@@ -89,8 +96,15 @@ def main():
             best_acc, best_state = acc, {k: v.clone() for k, v in clf.state_dict().items()}
     clf.load_state_dict(best_state)
     with torch.no_grad():
-        test_acc = (clf(Xte.to(dev)).argmax(1).cpu() == torch.from_numpy(y_te)).float().mean().item()
-    print(f"[finetune_classify] best val acc={best_acc:.4f}, test acc={test_acc:.4f}")
+        test_pred = clf(Xte.to(dev)).argmax(1).cpu().numpy()
+        test_acc = float((test_pred == y_te).mean())
+    from sklearn.metrics import precision_score, recall_score, f1_score
+    m = {"acc": float(test_acc),
+         "prec": float(precision_score(y_te, test_pred, zero_division=0)),
+         "rec": float(recall_score(y_te, test_pred, zero_division=0)),
+         "f1": float(f1_score(y_te, test_pred, zero_division=0))}
+    print(f"[finetune_classify] best val acc={best_acc:.4f}, "
+          f"test acc={m['acc']:.4f} prec={m['prec']:.4f} rec={m['rec']:.4f} f1={m['f1']:.4f}")
 
 
 if __name__ == "__main__":

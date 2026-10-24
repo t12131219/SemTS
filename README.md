@@ -3,6 +3,16 @@
 时序数据"通用语义"层面的自监督预训练模型（论文级方法，单卡可训练，PyTorch 2.6.0 + CUDA 12.4）。
 主配置：**S1+S3+S4** 三条语义流 + 通道独立 patch Transformer 骨干，ETTm1 预训练后在预测/分类/异常/零样本上全面验证。
 
+## 架构图
+
+![SemTS architecture](docs/figures/semts_architecture.png)
+
+> 主图（v3，风格参考 TS2Vec/CoST/SimMTM/TF-C/ShuffleMTM 论文图）：
+> `docs/figures/semts_architecture.png` / `.svg`，
+> 生成脚本 `python scripts/make_architecture_figure_v3.py`；
+> 备选详细版：`docs/figures/semts_architecture_detailed.png`（`scripts/make_architecture_figure_detailed.py`）；
+> Mermaid 版见 [docs/design.md](docs/design.md) §2。
+
 ## 定位
 把"通用时序语义"7 维度归纳为可消融的预训练**语义流**（主配置为 S1+S3+S4；S2 经消融判定移除，模块保留）：
 

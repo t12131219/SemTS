@@ -36,6 +36,7 @@ class SemTS(nn.Module):
             n_heads=cfg.n_heads,
             d_ff=cfg.d_ff,
             dropout=cfg.dropout,
+            grad_checkpoint=getattr(cfg, "grad_checkpoint", False),
         )
         self.stream2 = Stream2(
             cfg.d_model,

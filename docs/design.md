@@ -26,31 +26,35 @@
 
 ## 2. 总体架构
 
-```
-                        ┌─────────────────────────────────────────────────┐
-  x ∈ R^(L×C) ──► 视图构造（掩码/裁剪 + scale/shift/jitter + 三态质量掩码）   │
-                        └──────────────────┬──────────────────────────────┘
-                                           ▼
-                      ┌─────────────────────────────────────────────┐
-                      │  骨干编码器（共享，参数 ~2–4M）                │
-                      │  Patch Embedding(16, stride 8)               │
-                      │  + Channel-Independent Transformer(L=4,d=256) │
-                      └───┬──────────┬──────────┬──────────┬─────────┘
-                          ▼          ▼          ▼          ▼
-                      ┌───────┐ ┌────────┐ ┌────────┐ ┌─────────────┐
-                      │  S1   │ │  S2    │ │  S3    │ │  S4         │
-                      │层级对比│ │模式头  │ │关系头  │ │质量头       │
-                      │①③     │ │④      │ │⑤      │ │⑦           │
-                      └───┬───┘ └───┬────┘ └───┬────┘ └──────┬──────┘
-                          ▼          ▼          ▼             ▼
-                     L_hier      L_pat     L_rel        L_qual
-                          └──────────┴──────────┴─────────────┘
-                                    总损失 L（自适应权重）
+![SemTS architecture](figures/semts_architecture.png)
+
+> 发表级矢量图（v3 风格）：`docs/figures/semts_architecture.png` / `.svg`
+> 由 `python scripts/make_architecture_figure_v3.py` 生成；
+> 备选详细版 `docs/figures/semts_architecture_detailed.png`
+> 由 `scripts/make_architecture_figure_detailed.py` 生成。
+
+```mermaid
+flowchart LR
+  X["Input window<br/>x ∈ ℝ^(C×L), L=336<br/>channel-independent, z-score"] --> PE["Patch Embedding<br/>Conv1d p=16, s=8 → P=41"]
+  PE --> TR["Shared Transformer Encoder<br/>4 blocks, d=256, 8 heads, d_ff=512<br/>≈5.6M params"]
+  TR --> Z["Patch reps z ∈ ℝ^(C×P×d)<br/>(last patch → probe)"]
+  VA["View A: mask p=0.5 + crop"] -.-> TR
+  VB["View B: + scale/shift/jitter"] -.-> TR
+  Z --> S1["S1 · ①time + ③entity<br/>multi-scale temporal + instance NT-Xent"]
+  Z --> S2["S2 · ④pattern (ablated, w2=0)<br/>TFD trend experts + SFD amp/phase"]
+  Z --> S3["S3 · ⑤relation (novel)<br/>soft lag-bin regression + lead-direction CE"]
+  Z --> S4["S4 · ⑦quality (novel)<br/>three-state recon O/M/N + noise-level prediction"]
+  X -. "FFT lagged cross-correlation → weak labels" .-> S3
+  S1 --> L["Total loss<br/>L = w1·L_S1 + w2·L_S2 + w3·L_S3 + w4·L_S4<br/>(main: w2=0, w3=0.5)"]
+  S2 --> L
+  S3 --> L
+  S4 --> L
+  Z -. "frozen encoder" .-> P["Linear probes<br/>forecasting (ridge) · classification · anomaly · zero-shot"]
 ```
 
 - **骨干**：通道独立（channel-independent）Transformer——每个通道独立编码，天然支持任意通道数，
   是 ③ 实体语义与零样本跨域（不同通道数的数据集可共享骨干）的关键设计（SimMTM 同款动机）。
-- **表示**：主干输出逐时间戳表示 `z ∈ R^(L'×C×d)`；S1 取时间戳/实例级，S2 取趋势/季节双流，S3 取通道级摘要，S4 走轻量解码器。
+- **表示**：主干输出逐 patch 表示 `z ∈ R^(C×P×d)`；S1 取 patch/实例级，S2 取趋势/季节双流，S3 取通道级摘要，S4 走轻量解码器。
 
 ---
 

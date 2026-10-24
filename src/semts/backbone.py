@@ -9,6 +9,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+import torch.utils.checkpoint
 
 
 class PositionalEncoding(nn.Module):
@@ -54,13 +55,14 @@ class PatchEncoder(nn.Module):
     """通道独立 patch 编码器。"""
 
     def __init__(self, d_model=256, patch_len=16, stride=8, n_layers=4, n_heads=8,
-                 d_ff=512, dropout=0.1):
+                 d_ff=512, dropout=0.1, grad_checkpoint=False):
         super().__init__()
         assert d_model % (2 * n_heads) == 0, \
             "d_model 必须被 2*n_heads 整除（保证 d_model 为偶数：PositionalEncoding 的奇偶切片要求）"
         self.d_model = d_model
         self.patch_len = patch_len
         self.stride = stride
+        self.grad_checkpoint = grad_checkpoint
         self.input_conv = nn.Conv1d(1, d_model, kernel_size=patch_len, stride=stride)
         self.pos = PositionalEncoding(d_model)
         self.blocks = nn.ModuleList(
@@ -75,6 +77,7 @@ class PatchEncoder(nn.Module):
 
         keep_mask: (B*C, P)，1=保留，0=置零（TS2Vec 式隐向量时间戳掩码，
         掩码打在隐向量而非原始值上，规避时序数值无界/量纲问题）。
+        grad_checkpoint=True 时对每层做激活检查点（大通道数据集省显存 ~3×）。
         """
         B, L, C = x.shape
         if L < self.patch_len:
@@ -85,5 +88,8 @@ class PatchEncoder(nn.Module):
             z = z * keep_mask.unsqueeze(-1)
         z = self.pos(z)
         for blk in self.blocks:
-            z = blk(z)
+            if self.grad_checkpoint and self.training:
+                z = torch.utils.checkpoint.checkpoint(blk, z, use_reentrant=False)
+            else:
+                z = blk(z)
         return z.reshape(B, C, z.size(1), self.d_model)

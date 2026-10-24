@@ -66,6 +66,17 @@ treat cross-channel lead-lag as a pre-training target, nor model quality/missing
 
 ## 3. Method
 
+![Figure 1: SemTS architecture](figures/semts_architecture.png)
+
+**Figure 1.** SemTS overview. (Top) A shared channel-independent patch Transformer encodes a
+window `x ∈ R^{C×L}` (L = 336) into patch representations `z ∈ R^{C×P×d}` (P = 41); two
+contextual views (mask/crop, optionally scale/shift/jitter) serve as contrastive positives.
+(Middle) Four ablatable semantic streams: S1 hierarchical time/entity contrast, S2
+trend-seasonal disentangling (ablated, w2 = 0), S3 novel cross-channel lead-lag regression
+(labels from FFT lagged cross-correlation), S4 novel three-state missingness/noise
+reconstruction. (Bottom) Weighted objective and the frozen-representation downstream probes.
+The main configuration keeps S1 + S3 + S4.
+
 ### 3.1 Framework: semantic streams
 7 维语义 → 4 条可消融流（主配置保留 S1+S3+S4；S2 经消融判定移除）：
 
