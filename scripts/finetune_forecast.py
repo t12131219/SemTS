@@ -6,10 +6,14 @@
     Y 目标矩阵按窗口流式生成（不再一次性物化 N×H×C）；
   - 大通道数据集（如 Traffic 862 通道、H=720）下内存仍可控。
 
+--revin：逐窗口 RevIN（改进方案 A1）。每个窗口先按通道去均值/除标准差再编码；
+目标用同一窗口统计量归一化；最终指标反归一化回原空间（与默认协议数字可直接对比）。
+文献依据：RevIN/SAN（非平稳归一化）；arXiv:2605.19462（线性探针对预测的增益高度
+依赖归一化处理）。
+
 用法:
     python scripts/finetune_forecast.py --ckpt experiments/pretrain_ettm1/ckpt_ep9.pt \
-        --data data/ETTm1.csv [--horizons 96,192,336,720]
-指标在 z-score 标准化空间报告（与 TS2Vec/CoST/SimMTM 协议一致）。
+        --data data/ETTm1.csv [--horizons 96,192,336,720] [--revin]
 """
 import argparse
 import os
@@ -25,8 +29,7 @@ from semts.model_factory import load_encoder_for_eval
 
 
 def window_iter(ds, split, L, H=None, chunk=256):
-    """流式生成窗口：yield (x, y)，x: (c, L, C) float32；y: None 或 (c, H, C)。
-    直接索引 ds.data（标准化全序列，内存极小），不一次性物化全部窗口。"""
+    """流式生成窗口：yield (x, y)，x: (c, L, C) float32；y: None 或 (c, H, C)。"""
     t0, t1 = ds.bounds[split]
     n = t1 - t0 - L - (H if H else 0) + 1
     assert n > 0, split
@@ -39,15 +42,17 @@ def window_iter(ds, split, L, H=None, chunk=256):
         yield x, y
 
 
-@torch.no_grad()
-def extract_features(model, ds, split, L, dev, feat_batch=512):
-    """流式提取特征 → CPU 大数组 (N*C, d)。
+def _stats(x, dev):
+    """逐窗口逐通道统计量：返回 (mu, sd)，形状 (c, 1, C)。"""
+    xb = torch.from_numpy(x).to(dev)
+    mu = xb.mean(dim=1, keepdim=True)
+    sd = torch.sqrt(torch.var(xb, dim=1, keepdim=True, unbiased=False) + 1e-5)
+    return mu, sd
 
-    编码批量按显存与融合注意力约束自适应：
-      - 编码器输出激活 B*C*P*d*4B ≤ 0.25GB；
-      - token 数 B*C ≤ 8192（PyTorch 融合 MHA 在超大 token 下报
-        "invalid configuration argument"）。
-    """
+
+@torch.no_grad()
+def extract_features(model, ds, split, L, dev, feat_batch=512, revin=False):
+    """流式提取特征 → CPU 大数组 (N*C, d)。"""
     C = ds.n_channels
     P = (L - model.cfg.patch_len) // model.cfg.stride + 1
     b = min(feat_batch,
@@ -56,23 +61,39 @@ def extract_features(model, ds, split, L, dev, feat_batch=512):
     reps = []
     for x, _ in window_iter(ds, split, L, None, chunk=b):
         xb = torch.from_numpy(x).to(dev)
+        if revin:
+            mu, sd = _stats(x, dev)
+            xb = (xb - mu) / sd
         z = model.encode(xb)
         reps.append(z[:, :, -1, :].cpu())
     X = torch.cat(reps, 0)
     return X.reshape(-1, model.cfg.d_model)
 
 
-def ridge_fit_chunked(X, ds, split, L, H, lam, dev, chunk=256):
+def _targets(x, y, dev, revin):
+    """(c, H, C) → 按窗口×通道展开 (c*C, H)；revin 时用 x 的窗口统计量归一化，
+    并返回 (mu, sd) 展开形式供反归一化。"""
+    Yi = torch.from_numpy(y.transpose(0, 2, 1).reshape(-1, y.shape[1])).to(dev)
+    mu = sd = None
+    if revin:
+        mu, sd = _stats(x, dev)                      # (c, 1, C)
+        mu = mu.transpose(1, 2).reshape(-1, 1)       # (c*C, 1)
+        sd = sd.transpose(1, 2).reshape(-1, 1)
+        Yi = (Yi - mu) / sd
+    return Yi, mu, sd
+
+
+def ridge_fit_chunked(X, ds, split, L, H, lam, dev, revin=False, chunk=256):
     """A = XᵀX + λI；b = XᵀY（Y 流式），X 分块上传 GPU。"""
     d = X.size(1)
     C = ds.n_channels
     A = torch.zeros(d, d, device=dev)
     b = torch.zeros(d, H, device=dev)
     off = 0
-    for _, y in window_iter(ds, split, L, H, chunk=chunk):
+    for x, y in window_iter(ds, split, L, H, chunk=chunk):
         rows = y.shape[0] * C
         Xi = X[off:off + rows].to(dev)
-        Yi = torch.from_numpy(y.transpose(0, 2, 1).reshape(-1, H)).to(dev)
+        Yi, _, _ = _targets(x, y, dev, revin)
         A += Xi.t() @ Xi
         b += Xi.t() @ Yi
         off += rows
@@ -80,19 +101,26 @@ def ridge_fit_chunked(X, ds, split, L, H, lam, dev, chunk=256):
     return torch.linalg.solve(A, b)
 
 
-def mse_chunked(X, ds, split, L, H, W, dev, chunk=256):
-    sse, n = 0.0, 0
+def eval_chunked(X, ds, split, L, H, W, dev, revin=False, chunk=256):
+    """返回 (mse, mae)（反归一化回原空间，可与默认协议直接对比）。"""
+    sse = sae = 0.0
+    n = 0
     C = ds.n_channels
     off = 0
-    for _, y in window_iter(ds, split, L, H, chunk=chunk):
+    for x, y in window_iter(ds, split, L, H, chunk=chunk):
         rows = y.shape[0] * C
         Xi = X[off:off + rows].to(dev)
-        Yi = torch.from_numpy(y.transpose(0, 2, 1).reshape(-1, H)).to(dev)
-        e = Xi @ W - Yi
+        Yi, mu, sd = _targets(x, y, dev, revin)
+        pred = Xi @ W                                   # (rows, H) 归一化空间
+        if revin:
+            pred = pred * sd + mu                       # 反归一化回原空间
+            Yi = Yi * sd + mu
+        e = pred - Yi
         sse += (e * e).sum().item()
+        sae += e.abs().sum().item()
         n += e.numel()
         off += rows
-    return sse / n
+    return sse / n, sae / n
 
 
 def main():
@@ -103,46 +131,34 @@ def main():
     ap.add_argument("--max_channels", type=int, default=None,
                     help="通道截断（大通道数据集防止特征矩阵过大）")
     ap.add_argument("--horizons", type=str, default="96,192,336,720")
+    ap.add_argument("--revin", action="store_true",
+                    help="逐窗口 RevIN 归一化（改进方案 A1）")
     args = ap.parse_args()
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"[finetune_forecast] device={dev}")
+    print(f"[finetune_forecast] device={dev} revin={args.revin}")
 
     model = load_encoder_for_eval(args.ckpt, dev)
     cfg = model.cfg
 
     ds = SlidingWindowDataset(args.data, L=args.L, max_channels=args.max_channels)
     horizons = [int(h) for h in args.horizons.split(",")]
-    Hmax = max(horizons)
 
-    Xtr = extract_features(model, ds, "train", args.L, dev)
-    Xva = extract_features(model, ds, "val", args.L, dev)
-    Xte = extract_features(model, ds, "test", args.L, dev)
+    Xtr = extract_features(model, ds, "train", args.L, dev, revin=args.revin)
+    Xva = extract_features(model, ds, "val", args.L, dev, revin=args.revin)
+    Xte = extract_features(model, ds, "test", args.L, dev, revin=args.revin)
     print(f"[finetune_forecast] features: train={Xtr.shape[0]} val={Xva.shape[0]} "
           f"test={Xte.shape[0]}, dim={cfg.d_model}")
 
     for H in horizons:
         best = (None, 1e18)
         for lam in (0.1, 1.0, 10.0, 100.0, 1000.0):
-            W = ridge_fit_chunked(Xtr, ds, "train", args.L, H, lam, dev)
-            mse = mse_chunked(Xva, ds, "val", args.L, H, W, dev)
+            W = ridge_fit_chunked(Xtr, ds, "train", args.L, H, lam, dev, revin=args.revin)
+            mse, _ = eval_chunked(Xva, ds, "val", args.L, H, W, dev, revin=args.revin)
             if mse < best[1]:
                 best = (W, mse)
         W = best[0]
-        mse = mse_chunked(Xte, ds, "test", args.L, H, W, dev)
-        # MAE 与 MSE 同轮分块（复用 W）
-        sae, n = 0.0, 0
-        C = ds.n_channels
-        off = 0
-        for _, y in window_iter(ds, "test", args.L, H):
-            rows = y.shape[0] * C
-            Xi = Xte[off:off + rows].to(dev)
-            Yi = torch.from_numpy(y.transpose(0, 2, 1).reshape(-1, H)).to(dev)
-            e = Xi @ W - Yi
-            sae += e.abs().sum().item()
-            n += e.numel()
-            off += rows
-        mae = sae / n
+        mse, mae = eval_chunked(Xte, ds, "test", args.L, H, W, dev, revin=args.revin)
         print(f"H={H:>4}: MSE={mse:.4f} MAE={mae:.4f} (best val MSE={best[1]:.4f})")
 
 

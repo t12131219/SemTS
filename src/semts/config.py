@@ -41,6 +41,8 @@ class SemTSConfig:
     # ---- 视图构造 ----
     crop_min_frac: float = 0.6  # 随机窗口最小长度比例（batch 共享几何）
     p_mask: float = 0.5         # 隐向量时间戳掩码概率（TS2Vec 式）
+    revin: bool = False         # 预训练管线内置逐窗口 RevIN（改进方案 C2：编码器学习
+                                # 对窗口尺度/平移不变；评估时需同样开启 --revin）
 
     # ---- 损失权重 ----
     tau: float = 0.1            # 对比温度（S1/S2 时域）

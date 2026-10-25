@@ -48,6 +48,8 @@ def main():
     ap.add_argument("--tf32", action="store_true", help="开启 TF32（Ampere+ 如 3090，提速 ~30%）")
     ap.add_argument("--grad_checkpoint", action="store_true",
                     help="编码器层激活检查点（大通道数据集省显存 ~3×，训练略慢）")
+    ap.add_argument("--revin", action="store_true",
+                    help="预训练管线内置逐窗口 RevIN（改进方案 C2；评估时需 --revin 配套）")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
@@ -67,6 +69,7 @@ def main():
     cfg = SemTSConfig()
     cfg.L = args.L  # 滞后搜索上界随实际窗口长度推导
     cfg.grad_checkpoint = args.grad_checkpoint
+    cfg.revin = args.revin
     for k in ("w1", "w2", "w3", "w4", "lam_dir", "lam_q", "tau_corr", "mask_ratio", "noise_ratio"):
         v = getattr(args, k)
         if v is not None:

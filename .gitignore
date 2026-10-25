@@ -9,6 +9,11 @@ experiments_origin/
 third_party/ts2vec/
 third_party/CoST/
 third_party/ShuffleMTM/
+third_party/TimeSiam/
+third_party/SimMTM/
+third_party/COMET/
+third_party/PatchTST/
+third_party/PITS/
 
 # ===== Python =====
 __pycache__/

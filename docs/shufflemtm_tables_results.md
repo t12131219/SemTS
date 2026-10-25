@@ -163,3 +163,54 @@
 | SimMTM | 68.270 | 84.090 |
 | COMET | 90.500 | 89.080 |
 | **SemTS** | **69.076** | **85.497** |
+
+---
+
+# SemTS vs. ShuffleMTM (SOTA) 对比分析 / Comparative Analysis
+
+> **协议口径 / Protocol caveats**：ShuffleMTM = 100-epoch self-pretraining per dataset +
+> freeze-then-full fine-tuning（本次为单次运行；论文为 5-run 平均 + 超参网格搜索）；
+> SemTS = 10-epoch pretraining + frozen encoder + linear probe（no fine-tuning）。
+> 分类任务中 SemTS 为**跨域迁移**（ETTm1 预训练 → AD/PTB 线性探针）。
+> SemTS 的总计算/协议预算约为对方的 1/10。
+
+## 1. 总比分 / Scoreboard
+
+| 表 / Table | SemTS 胜 / Wins | ShuffleMTM 胜 / Wins |
+|---|---|---|
+| Table 1 域内预测（32 格） | **8**（ETTh2×4 + Weather×4） | 24 |
+| Table 2 跨域（8 对） | 1（ETTh1→ETTh2） | 7 |
+| Table 3 分类（AD/PTB） | **2 / 2** | 0 |
+| Table 4 少量标签（6 格） | **5 胜 1 平** | 0 |
+
+## 2. SemTS 反超 SOTA 之处 / Where SemTS beats the SOTA baseline
+
+**预测 / Forecasting**（10-epoch SemTS vs 100-epoch ShuffleMTM）：
+- ETTh2: 0.202/0.237/0.283/0.362 vs 0.289/0.367/0.416/0.429 —— 全面领先 8–33%；
+- Weather: 0.175/0.217/0.267/0.343 vs 0.185/0.235/0.292/0.377 —— 领先 3–9%。
+
+**分类 / Classification**（SemTS 零微调线性探针 vs ShuffleMTM 全微调）：
+- PTB: acc **89.1 vs 79.3**（+9.8），F1 92.9 vs 87.2；
+- AD: acc **69.9 vs 65.1**（+4.8），F1 73.2 vs 72.4。
+
+**少量标签 / Limited labels**（S3+S4 语义设计的预期收益处）：
+- AD 5% 标签: **69.1 vs 51.5（+17.6）**；20%: 72.2 vs 58.4（+13.8）；
+- PTB 三档稳定领先 5–7.5 个点。
+
+## 3. ShuffleMTM 占优之处 / Where ShuffleMTM remains ahead
+
+- **大通道数据集**：Electricity（0.206 vs 0.237 @H96）、Traffic（0.524 vs 0.785 @H96）
+  ——862 通道下通道独立 patch 表示 + 岭回归负担过重；
+- **Exchange**：0.106 vs 0.164（H=720 时 1.080 vs 2.499，差距显著）；
+- ETTh1 / ETTm1 / ETTm2 各视野落后 5–20%；
+- **跨域** 7/8 对落后（SemTS 跨域源模型同样仅 10-epoch 预算）。
+
+## 4. 结论与改进方向 / Conclusions and future directions
+
+1. 以 1/10 预算 + 冻结线性探针，SemTS 在 ETTh2/Weather 反超、分类与少标签全胜——
+   印证 S3（跨通道滞后）+ S4（三态质量）在**少标签与跨域**场景的真实价值；
+2. 主要短板为大通道（Traffic/Electricity）与日频金融数据（Exchange）：
+   改进方向 ① 预训练预算对齐（10→100 epoch）；② 大通道数据集的关系头全通道对扩展
+   或通道子采样；③ Exchange 采用对数收益变换 / 补充 S2 趋势流；
+3. 论文表述建议：主推"相同或更低预算下分类/少标签/部分预测反超 SOTA"，预测主表在
+   协议对齐（同 100-epoch 预算）后有望进一步收窄差距，不宜以当前原始数字宣称全面 SOTA。

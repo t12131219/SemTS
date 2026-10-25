@@ -80,8 +80,19 @@ class SemTS(nn.Module):
         t0, t1 = patch_to_timestamps(s, p, cfg.patch_len, cfg.stride)
         win_a = x_emb[:, t0:t1]
         win_b = x_b[:, t0:t1] if need_b else None
+        # 预训练管线内置 RevIN（C2）：窗口统计量取自干净输入，输入与 S4 重建目标
+        # 同时归一化，使编码器学习对逐窗口尺度/平移不变
+        if getattr(cfg, "revin", False):
+            xw = x[:, t0:t1]                                  # (B, Lw, C) 干净窗口
+            mu = xw.mean(1, keepdim=True)
+            sd = torch.sqrt(torch.var(xw, dim=1, keepdim=True, unbiased=False) + 1e-5)
+            win_a = (win_a - mu) / sd
+            if win_b is not None:
+                win_b = (win_b - mu) / sd
         # S4 重建真值必须是干净输入（M 点已置 0+嵌入，目标应为其原始值）
         win_clean = x[:, t0:t1].transpose(1, 2)      # (B, C, Lw)
+        if getattr(cfg, "revin", False):
+            win_clean = ((win_clean.transpose(1, 2) - mu) / sd).transpose(1, 2)
         state_win = state[:, t0:t1].transpose(1, 2)  # (B, C, Lw)
         q_win = q[:, t0:t1].transpose(1, 2)          # (B, C, Lw)
 
