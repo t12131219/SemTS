@@ -6,6 +6,7 @@
 # Usage: bash scripts/run_semts_improvement_3090.sh [--skip-pretrain]
 set -e
 cd "$(dirname "$0")/.."
+mkdir -p experiments third_party
 LOG="experiments/semts_improvement.log"
 : > "$LOG"
 
