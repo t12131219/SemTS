@@ -29,9 +29,18 @@ declare -A CSV=([ETTh1]="data/ETTh1.csv" [ETTh2]="data/ETTh2.csv" [ETTm1]="data/
 declare -A B=([ETTh1]=256 [ETTh2]=256 [ETTm1]=256 [ETTm2]=256 [Exchange]=256
               [Weather]=128 [Electricity]=16 [Traffic]=8)
 
+# 数据集过滤：第 2 个参数为逗号分隔的"仅训练"列表（默认 all）
+TRAIN_SET="all"
+[ -n "${2:-}" ] && TRAIN_SET="$2"
+in_train_set() {
+    [ "$TRAIN_SET" = "all" ] && return 0
+    case ",$TRAIN_SET," in *",$1,"*) return 0 ;; *) return 1 ;; esac
+}
+
 if [ "$1" != "--skip-pretrain" ]; then
-    echo "########## 阶段 1：B1 预训练（100 epoch）##########" | tee -a "$LOG"
+    echo "########## 阶段 1：B1 预训练（100 epoch）[TRAIN_SET=$TRAIN_SET] ##########" | tee -a "$LOG"
     for ds in ETTh1 ETTh2 ETTm1 ETTm2 Exchange Weather Electricity Traffic; do
+        in_train_set "$ds" || { echo "[skip-by-request] pretrain $ds" | tee -a "$LOG"; continue; }
         gc=""
         case $ds in Electricity|Traffic) gc="--grad_checkpoint";; esac
         out="experiments/semts_b1_$ds"
@@ -46,6 +55,8 @@ fi
 
 echo "########## 阶段 2：三协议评估 ##########" | tee -a "$LOG"
 for ds in ETTh1 ETTh2 ETTm1 ETTm2 Exchange Weather Electricity Traffic; do
+    # 若显式给了数据集过滤，评估同样只跑这些数据集
+    [ "$TRAIN_SET" = "all" ] || { in_train_set "$ds" || continue; }
     for ck in "semts_b1_$ds" "semts_tables_$ds"; do
         ckpt="experiments/$ck/ckpt_ep99.pt"
         [ "$ck" = "semts_tables_$ds" ] && ckpt="experiments/$ck/ckpt_ep9.pt"

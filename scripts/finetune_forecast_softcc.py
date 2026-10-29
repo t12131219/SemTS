@@ -41,6 +41,8 @@ def main():
                     help="软权重温度网格（越小越接近硬选择）")
     ap.add_argument("--self_weight", type=float, default=1.0,
                     help="目标通道自身表示相对软源原型的权重（>1 强调自身历史）")
+    ap.add_argument("--topk_sparse", type=int, default=32,
+                    help="软权重仅保留 |corr| 最大的 top-k 个源（有界支持，宽通道提速 O(C²)→O(kC)）")
     args = ap.parse_args()
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -96,15 +98,20 @@ def main():
                 Yva = Yva_all[:, :, c]
                 Yte = Yte_all[:, :, c]
             best = (None, 1e18)
-            # 软源原型（按 tau 网格）
+            # 软源原型（按 tau 网格；权重先稀疏化到 top-k 源，宽通道 O(kC) 而非 O(C²)）
+            topk = np.argsort(-corr_abs[c])[:min(args.topk_sparse, C - 1)]
             for tau in taus:
                 w = np.exp(corr_abs[c] / tau)            # (C,)
                 w[c] = 0.0                               # 排除自身
-                w = w / w.sum()
+                keep = np.zeros(C, dtype=bool)
+                keep[topk] = True
+                w = np.where(keep, w, 0.0)
+                w = w / max(w.sum(), 1e-12)
                 w_t = torch.from_numpy(w).float()        # CPU：与 Xtr[s]（CPU）同设备加权
-                P_tr = sum(w_t[s] * Xtr[s][:Nw_tr] for s in range(C)).to(dev)  # (Nw, d)
-                P_va = sum(w_t[s] * Xva[s][:Nw_va] for s in range(C)).to(dev)
-                P_te = sum(w_t[s] * Xte[s][:Nw_te] for s in range(C)).to(dev)
+                srcs = topk.tolist()
+                P_tr = sum(w_t[s] * Xtr[s][:Nw_tr] for s in srcs).to(dev)  # (Nw, d)
+                P_va = sum(w_t[s] * Xva[s][:Nw_va] for s in srcs).to(dev)
+                P_te = sum(w_t[s] * Xte[s][:Nw_te] for s in srcs).to(dev)
                 cols = torch.cat([args.self_weight * Xc_tr, P_tr], dim=1)
                 cols_va = torch.cat([args.self_weight * Xc_va, P_va], dim=1)
                 cols_te = torch.cat([args.self_weight * Xc_te, P_te], dim=1)
